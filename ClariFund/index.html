@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ClariFund — The Loan Decision Workspace</title>
+  <meta name="description" content="B2B embedded loan decision workspace for SME borrowers adhering to RBI April 2024 Harmonized Key Fact Statement guidelines." />
+  <link rel="stylesheet" href="./src/styles/index.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+  <!-- React 18 & ReactDOM 18 UMD -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  
+  <!-- Standalone Precompiled Bundle (Zero-network fetch, 100% offline & host-agnostic for Netlify/Vercel/GitHub Pages) -->
+  <script src="./clarifund.bundle.js"></script>
+
+  <!-- Babel Standalone (only used as fallback in development if bundle is absent) -->
+  <script src="https://unpkg.com/@babel/standalone@7.24.0/babel.min.js"></script>
+</head>
+<body>
+  <div id="root">
+    <div style="display:flex;height:100vh;align-items:center;justify-content:center;background:#F8FAFC;color:#64748B;font-family:sans-serif;">
+      <div style="text-align:center;">
+        <div style="width:36px;height:36px;border:3px solid #E2E8F0;border-top-color:#0284C7;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 16px;"></div>
+        <p style="font-size:0.875rem;letter-spacing:0.5px;font-weight:500;">Initializing ClariFund Workspace...</p>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+
+  <!-- Universal In-Browser React/JSX Module Loader -->
+  <script>
+    (async function initClariFundWorkspace() {
+      // Helper: normalize relative paths
+      function normalizePath(basePath, relPath) {
+        if (!relPath.startsWith('.')) return relPath;
+        const baseParts = basePath.split('/').slice(0, -1);
+        const relParts = relPath.split('/');
+        for (const p of relParts) {
+          if (p === '.' || p === '') continue;
+          if (p === '..') {
+            if (baseParts.length > 0) baseParts.pop();
+          } else {
+            baseParts.push(p);
+          }
+        }
+        let resolved = baseParts.join('/');
+        if (!resolved.startsWith('/')) resolved = '/' + resolved;
+        return resolved;
+      }
+
+      try {
+        const moduleRegistry = {};
+
+        // 1. FAST PATH: Precompiled standalone bundle (Production / Netlify / Vercel / GitHub Pages)
+        if (window.__CLARIFUND_PRECOMPILED__) {
+          const precompiled = window.__CLARIFUND_PRECOMPILED__;
+
+          function bundleRequire(callingFile, specifier) {
+            if (specifier === 'react') return window.React;
+            if (specifier === 'react-dom' || specifier === 'react-dom/client') return window.ReactDOM;
+
+            const targetPath = normalizePath(callingFile, specifier);
+            if (moduleRegistry[targetPath]) {
+              return moduleRegistry[targetPath].exports;
+            }
+
+            const modFn = precompiled[targetPath];
+            if (!modFn) {
+              throw new Error('Module not found in precompiled bundle: ' + targetPath + ' (imported from ' + callingFile + ')');
+            }
+
+            const module = { exports: {} };
+            moduleRegistry[targetPath] = module;
+            const boundRequire = (reqSpec) => bundleRequire(targetPath, reqSpec);
+            modFn(boundRequire, module, module.exports);
+            return module.exports;
+          }
+
+          // Launch App directly from memory (0 network fetches to .jsx)
+          const appMod = bundleRequire('/src', '/src/App.jsx');
+          const App = appMod.default || appMod;
+          const rootElement = document.getElementById('root');
+          if (rootElement) {
+            const root = ReactDOM.createRoot(rootElement);
+            root.render(React.createElement(App));
+          }
+          return;
+        }
+
+        // 2. FALLBACK PATH: Dynamic fetch + Babel (development without bundle)
+        const SOURCE_FILES = [
+          './src/data/kfsPayload.js',
+          './src/services/geminiService.js',
+          './src/components/ui/Icons.jsx',
+          './src/context/LoanContext.jsx',
+          './src/components/Sidebar.jsx',
+          './src/components/Header.jsx',
+          './src/components/ClariGuideModal.jsx',
+          './src/components/screens/OfferOverview.jsx',
+          './src/components/screens/CostBreakdown.jsx',
+          './src/components/screens/RepaymentSchedule.jsx',
+          './src/components/screens/KeyObligations.jsx',
+          './src/components/screens/AgreementViewer.jsx',
+          './src/components/screens/KFSAcknowledgment.jsx',
+          './src/components/screens/DecisionExecution.jsx',
+          './src/components/screens/RequestClarification.jsx',
+          './src/App.jsx'
+        ];
+
+        function resolveWithExtension(path, availablePaths) {
+          const clean = path.replace(/^\.\//, '/');
+          for (const avail of availablePaths) {
+            const availClean = avail.replace(/^\.\//, '/');
+            if (availClean === clean || availClean === clean + '.jsx' || availClean === clean + '.js') {
+              return avail;
+            }
+          }
+          return path;
+        }
+
+        const rawCodeMap = {};
+        await Promise.all(SOURCE_FILES.map(async (file) => {
+          const res = await fetch(file);
+          if (!res.ok) throw new Error('Failed to load ' + file + ' (' + res.status + ')');
+          rawCodeMap[file] = await res.text();
+        }));
+
+        const transpiledMap = {};
+        for (const file of SOURCE_FILES) {
+          const rawCode = rawCodeMap[file];
+          const cacheKey = 'clarifund_cache_' + file + '_' + rawCode.length;
+          const cached = sessionStorage.getItem(cacheKey);
+          if (cached) {
+            transpiledMap[file] = cached;
+          } else {
+            const out = Babel.transform(rawCode, {
+              presets: ['react', ['env', { modules: 'commonjs' }]]
+            }).code;
+            transpiledMap[file] = out;
+            try { sessionStorage.setItem(cacheKey, out); } catch (e) {}
+          }
+        }
+
+        function dynamicRequire(callingFile, specifier) {
+          if (specifier === 'react') return window.React;
+          if (specifier === 'react-dom' || specifier === 'react-dom/client') return window.ReactDOM;
+
+          const rawTarget = normalizePath(callingFile, specifier);
+          const targetPath = resolveWithExtension(rawTarget, SOURCE_FILES);
+
+          if (moduleRegistry[targetPath]) {
+            return moduleRegistry[targetPath].exports;
+          }
+          if (!transpiledMap[targetPath]) {
+            throw new Error('Module not found: ' + targetPath + ' (imported from ' + callingFile + ')');
+          }
+
+          const module = { exports: {} };
+          moduleRegistry[targetPath] = module;
+          const code = transpiledMap[targetPath];
+          const fn = new Function('require', 'module', 'exports', code);
+          const boundRequire = (reqSpec) => dynamicRequire(targetPath, reqSpec);
+          fn(boundRequire, module, module.exports);
+          return module.exports;
+        }
+
+        const appMod = dynamicRequire('./src', './src/App.jsx');
+        const App = appMod.default || appMod;
+        const rootElement = document.getElementById('root');
+        if (rootElement) {
+          const root = ReactDOM.createRoot(rootElement);
+          root.render(React.createElement(App));
+        }
+
+      } catch (err) {
+        console.error('ClariFund Initialization Error:', err);
+        const root = document.getElementById('root');
+        if (root) {
+          root.innerHTML = `
+            <div style="padding:40px;max-width:700px;margin:50px auto;background:#0F172A;border:1px solid #EF4444;border-radius:12px;color:#F8FAFC;font-family:sans-serif;">
+              <h2 style="color:#EF4444;margin-top:0;">ClariFund Startup Error</h2>
+              <p style="color:#CBD5E1;font-size:0.95rem;">${err.message}</p>
+              <pre style="background:#020617;padding:16px;border-radius:8px;overflow-x:auto;color:#FCA5A5;font-size:0.85rem;">${err.stack || ''}</pre>
+            </div>
+          `;
+        }
+      }
+    })();
+  </script>
+</body>
+</html>
